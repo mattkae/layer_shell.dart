@@ -1,0 +1,4 @@
+include: package:flutter_lints/flutter.yaml
+
+# The library intentionally imports Flutter's private, experimental windowing
+# APIs. Those imports are suppressed per-file with `ignore_for_file` directives.
