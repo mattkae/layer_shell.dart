@@ -71,40 +71,63 @@ target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK_LAYER_SHELL)
 
 ### Create a panel
 
+Call `initLayerShell()` in `main()`, but create your controllers from **inside
+the widget tree** (e.g. a `State`'s `initState`), not in `main()` — the GTK
+windowing system must be fully up before the first surface is created.
+
 ```dart
 import 'package:flutter/widgets.dart';
 import 'package:layer_shell/layer_shell.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  initLayerShell(); // installs the windowing owner globally
+  runWidget(const MyShell());
+}
 
-  // Install the layer-shell windowing owner globally.
-  initLayerShell();
+class MyShell extends StatefulWidget {
+  const MyShell({super.key});
+  @override
+  State<MyShell> createState() => _MyShellState();
+}
 
-  final monitor = listMonitors().firstOrNull;
+class _MyShellState extends State<MyShell> {
+  late final LayershellWindowController _panel;
 
-  final panel = LayershellWindowController(
-    layer: LayerShellLayer.top,
-    anchorEdges: const [
-      LayerShellEdge.top,
-      LayerShellEdge.left,
-      LayerShellEdge.right,
-    ],
-    height: 40,
-    exclusiveZone: 40,
-    monitor: monitor?.gdkMonitor,
-  );
+  @override
+  void initState() {
+    super.initState();
+    final monitor = listMonitors().firstOrNull;
+    _panel = LayershellWindowController(
+      layer: LayerShellLayer.top,
+      anchorEdges: const [
+        LayerShellEdge.top,
+        LayerShellEdge.left,
+        LayerShellEdge.right,
+      ],
+      height: 40,
+      exclusiveZone: 40,
+      monitor: monitor?.gdkMonitor,
+    );
+  }
 
-  runWidget(
-    ViewCollection(
+  @override
+  void dispose() {
+    _panel.destroy();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ViewCollection(
       views: [
         LayerShellWindow(
-          controller: panel,
+          controller: _panel,
           child: /* your panel content */,
         ),
       ],
-    ),
-  );
+    );
+  }
 }
 ```
 

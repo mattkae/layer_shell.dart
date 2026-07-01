@@ -44,7 +44,7 @@ To try experimental windowing APIs:
 See: https://github.com/flutter/flutter/issues/30701.
 ''';
 
-WindowingOwnerLinux? _owner;
+bool _initialized = false;
 
 /// Initializes layer-shell support and installs the windowing owner globally.
 ///
@@ -54,8 +54,8 @@ void initLayerShell() {
   if (!isWindowingEnabled) {
     throw UnsupportedError(_kWindowingDisabledErrorMessage);
   }
-  final owner = _owner ??= WindowingOwnerLinux();
-  WidgetsBinding.instance.windowingOwner = owner;
+  WidgetsBinding.instance.windowingOwner = WindowingOwnerLinux();
+  _initialized = true;
 }
 
 /// Returns the primary monitor's size in logical pixels.
@@ -186,16 +186,12 @@ class LayershellWindowController extends RegularWindowController {
     if (!isWindowingEnabled) {
       throw UnsupportedError(_kWindowingDisabledErrorMessage);
     }
-    final owner = _owner;
-    if (owner == null) {
+    if (!_initialized) {
       throw StateError(
           'initLayerShell() must be called before creating a LayershellWindowController.');
     }
-    final inner = owner.createRegularWindowController(
-            delegate: RegularWindowControllerDelegate(), resizable: false)
-        as RegularWindowControllerLinux;
-    return LayershellWindowController._wrap(
-      inner,
+    final controller = LayershellWindowController._internal();
+    controller._setup(
       layer: layer,
       anchorEdges: anchorEdges,
       keyboardMode: keyboardMode,
@@ -204,10 +200,23 @@ class LayershellWindowController extends RegularWindowController {
       exclusiveZone: exclusiveZone,
       monitor: monitor,
     );
+    return controller;
   }
 
-  LayershellWindowController._wrap(
-    this._inner, {
+  // We create and own the GtkWindow ourselves (rather than wrapping Flutter's
+  // RegularWindowControllerLinux) because gtk-layer-shell requires
+  // gtk_layer_init_for_window() to run *before* the window is realized. Flutter's
+  // controller realizes the window inside its constructor, which is too late.
+  LayershellWindowController._internal()
+      : _window = GtkWindow(GtkWindow.gtkWindowNew(0)), // GTK_WINDOW_TOPLEVEL
+        super.empty();
+
+  final GtkWindow _window;
+  late final FlutterView _view;
+  late final FlWindowMonitor _windowMonitor;
+  bool _destroyed = false;
+
+  void _setup({
     required LayerShellLayer layer,
     required List<LayerShellEdge> anchorEdges,
     required LayerShellKeyboardMode keyboardMode,
@@ -215,57 +224,74 @@ class LayershellWindowController extends RegularWindowController {
     int? height,
     int? exclusiveZone,
     ffi.Pointer<ffi.NativeType>? monitor,
-  }) : super.empty() {
-    // Forward change notifications from the inner controller so listeners on
-    // this wrapper (e.g. LayerShellWindow's ListenableBuilder) stay in sync.
-    _inner.addListener(notifyListeners);
+  }) {
+    _windowMonitor = FlWindowMonitor(
+      _window,
+      notifyListeners, // onConfigure
+      notifyListeners, // onStateChanged
+      notifyListeners, // onIsActiveNotify
+      notifyListeners, // onTitleNotify
+      () {}, // onClose
+      () {
+        _destroyed = true;
+        notifyListeners();
+      }, // onDestroy
+    );
 
-    // Apply layer-shell settings now — the GtkWindow exists but present() is
-    // deferred to the first frame, satisfying gtk-layer-shell's ordering rule.
-    final gtkWin = GtkWindow(_inner.windowHandle.cast());
-    FlView.fromHandle(_inner.flutterViewHandle.cast())
-        .setBackgroundColor('#00000000');
+    final view = FlView();
+    view.setBackgroundColor('#00000000');
+    final int viewId = view.getId();
+    _view = WidgetsBinding.instance.platformDispatcher.views.firstWhere(
+      (FlutterView v) => v.viewId == viewId,
+    );
 
-    gtkWin.layerInitForWindow();
+    // gtk-layer-shell requires init *before* the window is realized/mapped, so
+    // apply every layer-shell setting before present().
+    _window.layerInitForWindow();
     if (monitor != null && monitor.address != 0) {
-      gtkWin.layerSetMonitor(monitor);
+      _window.layerSetMonitor(monitor);
     }
     if (exclusiveZone != null) {
-      gtkWin.layerAutoExclusiveZoneEnable();
-      gtkWin.layerSetExclusiveZone(exclusiveZone);
+      _window.layerAutoExclusiveZoneEnable();
+      _window.layerSetExclusiveZone(exclusiveZone);
     }
     for (final edge in anchorEdges) {
-      gtkWin.layerSetAnchor(edge, true);
+      _window.layerSetAnchor(edge, true);
     }
-    gtkWin.layerSetLayer(layer);
-    gtkWin.layerSetKeyboardMode(keyboardMode);
-    gtkWin.setSizeRequest(width ?? -1, height ?? -1);
-    gtkWin.setDefaultSize(width ?? -1, height ?? -1);
-    gtkWin.setAppPaintable(true);
+    _window.layerSetLayer(layer);
+    _window.layerSetKeyboardMode(keyboardMode);
+    _window.setSizeRequest(width ?? -1, height ?? -1);
+    _window.setDefaultSize(width ?? -1, height ?? -1);
+    _window.setAppPaintable(true);
+    _window.add(view);
+    _window.present();
+    view.show();
   }
 
-  final RegularWindowControllerLinux _inner;
+  @override
+  FlutterView get rootView => _view;
 
   @override
-  FlutterView get rootView => _inner.rootView;
-
-  @override
-  Size get contentSize => _inner.contentSize;
+  Size get contentSize => _window.getSize();
 
   @override
   void destroy() {
-    _inner.removeListener(notifyListeners);
-    _inner.destroy();
+    if (_destroyed) return;
+    _window.destroy();
+    _windowMonitor.close();
+    _windowMonitor.unref();
+    _destroyed = true;
   }
 
   @override
-  bool get isActivated => _inner.isActivated;
+  bool get isActivated => _window.isActive();
 
   @override
-  void setSize(Size size) => _inner.setSize(size);
+  void setSize(Size size) =>
+      _window.resize(size.width.toInt(), size.height.toInt());
 
   @override
-  void activate() => _inner.activate();
+  void activate() => _window.present();
 
   // Layer-shell windows are compositor-managed — no-op these operations.
 
