@@ -29,8 +29,7 @@ sudo apt install libgtk-3-dev libgtk-layer-shell-dev
 
 `libgtk-layer-shell` is loaded at runtime via FFI, so it must be installed on
 any machine that runs your app. A Wayland compositor implementing the layer
-shell protocol (Sway, Hyprland, KDE, Mutter with the protocol, miracle-wm, etc.)
-is required at runtime.
+shell protocol (Miriway, miracle-wm, Sway, etc.) is required at runtime.
 
 ### Flutter
 
