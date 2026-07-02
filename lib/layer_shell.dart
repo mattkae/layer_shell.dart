@@ -22,6 +22,13 @@ import 'package:flutter/src/widgets/_window.dart';
 import 'package:flutter/src/widgets/_window_linux.dart';
 import 'src/gtk.dart';
 
+// Re-export the SDK windowing pieces used to open windows dynamically. These are
+// `@internal` in Flutter and therefore not reachable through the public
+// `package:flutter/widgets.dart`, so consumers (e.g. the example app) get them
+// from here instead.
+export 'package:flutter/src/widgets/_window.dart'
+    show WindowManager, WindowRegistry, WindowEntry;
+
 /// The layer a shell surface is stacked on, from bottom to top.
 typedef LayerShellLayer = GtkLayerShellLayer;
 
@@ -143,26 +150,6 @@ LayerShellLayer layerFromString(String s) {
       return LayerShellLayer.overlay;
     default: // 'top'
       return LayerShellLayer.top;
-  }
-}
-
-/// Manages dynamically-created LayerShell windows (e.g. a notification panel)
-/// for inclusion in the root ViewCollection.
-class DynamicLayerShellViews extends ChangeNotifier {
-  static final DynamicLayerShellViews instance = DynamicLayerShellViews._();
-  DynamicLayerShellViews._();
-
-  final List<Widget> _views = [];
-  List<Widget> get views => List.unmodifiable(_views);
-
-  void add(Widget view) {
-    _views.add(view);
-    notifyListeners();
-  }
-
-  void remove(Widget view) {
-    _views.remove(view);
-    notifyListeners();
   }
 }
 
