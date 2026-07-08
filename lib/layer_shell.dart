@@ -27,7 +27,18 @@ import 'src/gtk.dart';
 // `package:flutter/widgets.dart`, so consumers (e.g. the example app) get them
 // from here instead.
 export 'package:flutter/src/widgets/_window.dart'
-    show WindowManager, WindowRegistry, WindowEntry;
+    show
+        WindowManager,
+        WindowRegistry,
+        WindowEntry,
+        WindowScope,
+        PopupWindowController,
+        PopupWindowControllerDelegate;
+export 'package:flutter/src/widgets/_window_positioner.dart'
+    show
+        WindowPositioner,
+        WindowPositionerAnchor,
+        WindowPositionerConstraintAdjustment;
 
 /// The layer a shell surface is stacked on, from bottom to top.
 typedef LayerShellLayer = GtkLayerShellLayer;
@@ -156,7 +167,7 @@ LayerShellLayer layerFromString(String s) {
 /// A [WindowingOwnerLinux] that can also create gtk-layer-shell windows.
 ///
 /// [initLayerShell] installs one of these as the global windowing owner. It
-/// reuses the base owner's [GtkWindowRegistrar] so that layer-shell windows are
+/// reuses the base owner's [LinuxWindowRegistrar] so that layer-shell windows are
 /// registered alongside regular/dialog/popup windows and can be located by view
 /// ID (for example when parenting a dialog or popup to a panel).
 class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
@@ -189,8 +200,8 @@ class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
     );
     registrar.register(
       viewId: controller.rootView.viewId,
-      window: controller._window,
-      view: controller._view,
+      windowHandle: controller._window.instance.cast(),
+      viewHandle: controller._view.instance.cast(),
     );
     return controller;
   }
