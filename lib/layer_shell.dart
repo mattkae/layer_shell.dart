@@ -22,6 +22,24 @@ import 'package:flutter/src/widgets/_window.dart';
 import 'package:flutter/src/widgets/_window_linux.dart';
 import 'src/gtk.dart';
 
+// Re-export the SDK windowing pieces used to open windows dynamically. These are
+// `@internal` in Flutter and therefore not reachable through the public
+// `package:flutter/widgets.dart`, so consumers (e.g. the example app) get them
+// from here instead.
+export 'package:flutter/src/widgets/_window.dart'
+    show
+        WindowManager,
+        WindowRegistry,
+        WindowEntry,
+        WindowScope,
+        PopupWindowController,
+        PopupWindowControllerDelegate;
+export 'package:flutter/src/widgets/_window_positioner.dart'
+    show
+        WindowPositioner,
+        WindowPositionerAnchor,
+        WindowPositionerConstraintAdjustment;
+
 /// The layer a shell surface is stacked on, from bottom to top.
 typedef LayerShellLayer = GtkLayerShellLayer;
 
@@ -54,7 +72,7 @@ void initLayerShell() {
   if (!isWindowingEnabled) {
     throw UnsupportedError(_kWindowingDisabledErrorMessage);
   }
-  WidgetsBinding.instance.windowingOwner = WindowingOwnerLinux();
+  WidgetsBinding.instance.windowingOwner = ExtendedWindowingOwnerLinux();
   _initialized = true;
 }
 
@@ -146,30 +164,61 @@ LayerShellLayer layerFromString(String s) {
   }
 }
 
-/// Manages dynamically-created LayerShell windows (e.g. a notification panel)
-/// for inclusion in the root ViewCollection.
-class DynamicLayerShellViews extends ChangeNotifier {
-  static final DynamicLayerShellViews instance = DynamicLayerShellViews._();
-  DynamicLayerShellViews._();
-
-  final List<Widget> _views = [];
-  List<Widget> get views => List.unmodifiable(_views);
-
-  void add(Widget view) {
-    _views.add(view);
-    notifyListeners();
+/// A [WindowingOwnerLinux] that can also create gtk-layer-shell windows.
+///
+/// [initLayerShell] installs one of these as the global windowing owner. It
+/// reuses the base owner's [LinuxWindowRegistrar] so that layer-shell windows are
+/// registered alongside regular/dialog/popup windows and can be located by view
+/// ID (for example when parenting a dialog or popup to a panel).
+class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
+  /// Creates a layer-shell window controller and registers its native window
+  /// and view with the owner's registrar.
+  ///
+  /// Mirrors how the base owner implements [createRegularWindowController].
+  LayershellWindowController createLayerShellWindowController({
+    LayerShellLayer layer = LayerShellLayer.top,
+    List<LayerShellEdge> anchorEdges = const [
+      LayerShellEdge.top,
+      LayerShellEdge.left,
+      LayerShellEdge.right,
+    ],
+    LayerShellKeyboardMode keyboardMode = LayerShellKeyboardMode.onDemand,
+    int? width,
+    int? height,
+    int? exclusiveZone,
+    ffi.Pointer<ffi.NativeType>? monitor,
+  }) {
+    final controller = LayershellWindowController._internal(
+      owner: this,
+      layer: layer,
+      anchorEdges: anchorEdges,
+      keyboardMode: keyboardMode,
+      width: width,
+      height: height,
+      exclusiveZone: exclusiveZone,
+      monitor: monitor,
+    );
+    registrar.register(
+      viewId: controller.rootView.viewId,
+      windowHandle: controller._window.instance.cast(),
+      viewHandle: controller._view.instance.cast(),
+    );
+    return controller;
   }
 
-  void remove(Widget view) {
-    _views.remove(view);
-    notifyListeners();
-  }
+  /// Removes a layer-shell window from the registrar. Called by
+  /// [LayershellWindowController.destroy]; routed through the owner because the
+  /// [registrar] is only accessible from within a [WindowingOwnerLinux] subclass.
+  void _unregisterLayerShellWindow(int viewId) => registrar.unregister(viewId);
 }
 
-class LayershellWindowController extends RegularWindowController {
+class LayershellWindowController extends RegularWindowController
+    implements WindowControllerLinux {
   /// Create a new LayershellWindowController.
   ///
-  /// [initLayerShell] must have been called first.
+  /// [initLayerShell] must have been called first. This delegates to
+  /// [ExtendedWindowingOwnerLinux.createLayerShellWindowController] so the
+  /// window is always registered with the system.
   factory LayershellWindowController({
     LayerShellLayer layer = LayerShellLayer.top,
     List<LayerShellEdge> anchorEdges = const [
@@ -186,12 +235,12 @@ class LayershellWindowController extends RegularWindowController {
     if (!isWindowingEnabled) {
       throw UnsupportedError(_kWindowingDisabledErrorMessage);
     }
-    if (!_initialized) {
+    final owner = WidgetsBinding.instance.windowingOwner;
+    if (!_initialized || owner is! ExtendedWindowingOwnerLinux) {
       throw StateError(
           'initLayerShell() must be called before creating a LayershellWindowController.');
     }
-    final controller = LayershellWindowController._internal();
-    controller._setup(
+    return owner.createLayerShellWindowController(
       layer: layer,
       anchorEdges: anchorEdges,
       keyboardMode: keyboardMode,
@@ -200,23 +249,15 @@ class LayershellWindowController extends RegularWindowController {
       exclusiveZone: exclusiveZone,
       monitor: monitor,
     );
-    return controller;
   }
 
-  // We create and own the GtkWindow ourselves (rather than wrapping Flutter's
-  // RegularWindowControllerLinux) because gtk-layer-shell requires
-  // gtk_layer_init_for_window() to run *before* the window is realized. Flutter's
-  // controller realizes the window inside its constructor, which is too late.
-  LayershellWindowController._internal()
-      : _window = GtkWindow(GtkWindow.gtkWindowNew(0)), // GTK_WINDOW_TOPLEVEL
-        super.empty();
-
-  final GtkWindow _window;
-  late final FlutterView _view;
-  late final FlWindowMonitor _windowMonitor;
-  bool _destroyed = false;
-
-  void _setup({
+  // Modelled on Flutter's RegularWindowControllerLinux, with the gtk-layer-shell
+  // setup inserted *before* the window is realized. gtk_layer_init_for_window()
+  // and every layer-shell property must be applied before realize()/present(),
+  // which is why we drive window creation here rather than reusing the SDK's
+  // regular controller (which realizes inside its own constructor).
+  LayershellWindowController._internal({
+    required ExtendedWindowingOwnerLinux owner,
     required LayerShellLayer layer,
     required List<LayerShellEdge> anchorEdges,
     required LayerShellKeyboardMode keyboardMode,
@@ -224,29 +265,24 @@ class LayershellWindowController extends RegularWindowController {
     int? height,
     int? exclusiveZone,
     ffi.Pointer<ffi.NativeType>? monitor,
-  }) {
+  })  : _owner = owner,
+        _window = GtkWindow(GtkWindowType.toplevel),
+        super.empty() {
     _windowMonitor = FlWindowMonitor(
       _window,
-      notifyListeners, // onConfigure
-      notifyListeners, // onStateChanged
-      notifyListeners, // onIsActiveNotify
-      notifyListeners, // onTitleNotify
-      () {}, // onClose
-      () {
+      onConfigure: notifyListeners,
+      onStateChanged: notifyListeners,
+      onIsActiveNotify: notifyListeners,
+      onTitleNotify: notifyListeners,
+      onClose: () {},
+      onDestroy: () {
         _destroyed = true;
         notifyListeners();
-      }, // onDestroy
-    );
-
-    final view = FlView();
-    view.setBackgroundColor('#00000000');
-    final int viewId = view.getId();
-    _view = WidgetsBinding.instance.platformDispatcher.views.firstWhere(
-      (FlutterView v) => v.viewId == viewId,
+      },
     );
 
     // gtk-layer-shell requires init *before* the window is realized/mapped, so
-    // apply every layer-shell setting before present().
+    // apply every layer-shell setting before realize().
     _window.layerInitForWindow();
     if (monitor != null && monitor.address != 0) {
       _window.layerSetMonitor(monitor);
@@ -263,13 +299,32 @@ class LayershellWindowController extends RegularWindowController {
     _window.setSizeRequest(width ?? -1, height ?? -1);
     _window.setDefaultSize(width ?? -1, height ?? -1);
     _window.setAppPaintable(true);
-    _window.add(view);
-    _window.present();
-    view.show();
+    // Force creation as Flutter will try and render to it immediately.
+    _window.realize();
+
+    final engine = FlEngine.current();
+    _view = FlView(engine);
+    _view.setBackgroundColor('#00000000');
+    _viewMonitor = FlViewMonitor(
+      _view,
+      onFirstFrame: () {
+        _window.present();
+      },
+    );
+    final int viewId = _view.getId();
+    rootView = WidgetsBinding.instance.platformDispatcher.views.firstWhere(
+      (FlutterView view) => view.viewId == viewId,
+    );
+    _view.show();
+    _window.add(_view);
   }
 
-  @override
-  FlutterView get rootView => _view;
+  final ExtendedWindowingOwnerLinux _owner;
+  final GtkWindow _window;
+  late final FlView _view;
+  late final FlViewMonitor _viewMonitor;
+  late final FlWindowMonitor _windowMonitor;
+  bool _destroyed = false;
 
   @override
   Size get contentSize => _window.getSize();
@@ -277,10 +332,13 @@ class LayershellWindowController extends RegularWindowController {
   @override
   void destroy() {
     if (_destroyed) return;
+    _viewMonitor.close();
+    _viewMonitor.unref();
     _window.destroy();
     _windowMonitor.close();
     _windowMonitor.unref();
     _destroyed = true;
+    _owner._unregisterLayerShellWindow(rootView.viewId);
   }
 
   @override
@@ -292,6 +350,22 @@ class LayershellWindowController extends RegularWindowController {
 
   @override
   void activate() => _window.present();
+
+  @override
+  ffi.Pointer<ffi.Void> get windowHandle {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.instance.cast();
+  }
+
+  @override
+  ffi.Pointer<ffi.Void> get flutterViewHandle {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _view.instance.cast();
+  }
 
   // Layer-shell windows are compositor-managed — no-op these operations.
 
