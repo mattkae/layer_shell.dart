@@ -12,9 +12,7 @@ and notification surfaces.
 
 ## Demo
 
-<video src="https://github.com/mattkae/layer_shell.dart/raw/master/demo.mp4" controls width="100%"></video>
-
-> Not seeing the video? [Watch demo.mp4 directly](https://github.com/mattkae/layer_shell.dart/raw/master/demo.mp4).
+![layer_shell demo](demo.gif)
 
 ## ⚠️ Experimental
 
