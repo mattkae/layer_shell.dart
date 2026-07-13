@@ -12,7 +12,7 @@ and notification surfaces.
 
 ## Demo
 
-![layer_shell demo](demo.gif)
+https://github.com/user-attachments/assets/8eb5e841-f498-4873-b61e-4605048aa9ef
 
 ## ⚠️ Experimental
 
