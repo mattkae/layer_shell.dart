@@ -1,6 +1,10 @@
 // WindowManager/WindowRegistry/WindowEntry are `@internal` in Flutter's
 // experimental windowing API; suppress the internal-member lint here.
 // ignore_for_file: invalid_use_of_internal_member
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:layer_shell/layer_shell.dart';
 
@@ -23,8 +27,17 @@ class _ExampleApp extends StatefulWidget {
   State<_ExampleApp> createState() => _ExampleAppState();
 }
 
+/// Each panel gets a wildly different colour so it is obvious at a glance that
+/// they are three separate layer-shell surfaces rather than one window.
+const Color _kTopPanelColor = Color(0xFF1E66F5); // blue
+const Color _kBottomPanelColor = Color(0xFF40A02B); // green
+const Color _kLeftPanelColor = Color(0xFFD20F39); // red
+
 class _ExampleAppState extends State<_ExampleApp> {
   late final LayershellWindowController _panel;
+  late final LayershellWindowController _bottomPanel;
+  late final LayershellWindowController _leftPanel;
+  late final LayershellWindowController _background;
   MonitorInfo? _monitor;
 
   @override
@@ -47,28 +60,223 @@ class _ExampleAppState extends State<_ExampleApp> {
       exclusiveZone: 40,
       monitor: _monitor?.gdkMonitor,
     );
+
+    // Two more bars, anchored to the bottom and left edges. Each reserves its
+    // own thickness, so the compositor keeps all three out of each other's way.
+    _bottomPanel = LayershellWindowController(
+      layer: LayerShellLayer.top,
+      anchorEdges: const [
+        LayerShellEdge.bottom,
+        LayerShellEdge.left,
+        LayerShellEdge.right,
+      ],
+      keyboardMode: LayerShellKeyboardMode.none,
+      height: 48,
+      exclusiveZone: 48,
+      monitor: _monitor?.gdkMonitor,
+    );
+
+    _leftPanel = LayershellWindowController(
+      layer: LayerShellLayer.top,
+      anchorEdges: const [
+        LayerShellEdge.left,
+        LayerShellEdge.top,
+        LayerShellEdge.bottom,
+      ],
+      keyboardMode: LayerShellKeyboardMode.none,
+      width: 72,
+      exclusiveZone: 72,
+      monitor: _monitor?.gdkMonitor,
+    );
+
+    // A wallpaper on the bottom-most layer. Anchoring all four edges (with no
+    // width/height) lets the compositor stretch it across the whole output, and
+    // `exclusiveZone: -1` opts out of honouring *other* surfaces' exclusive
+    // zones — without it the panel's 40px reservation would shrink this window
+    // down to the space below the bar instead of running underneath it.
+    //
+    // Note this window accepts pointer input across the entire output: a
+    // layer-shell surface gets a full input region by default, and the package
+    // exposes no way to shrink it.
+    _background = LayershellWindowController(
+      layer: LayerShellLayer.background,
+      anchorEdges: const [
+        LayerShellEdge.top,
+        LayerShellEdge.bottom,
+        LayerShellEdge.left,
+        LayerShellEdge.right,
+      ],
+      keyboardMode: LayerShellKeyboardMode.none,
+      exclusiveZone: -1,
+      monitor: _monitor?.gdkMonitor,
+    );
   }
 
   @override
   void dispose() {
     _panel.destroy();
+    _bottomPanel.destroy();
+    _leftPanel.destroy();
+    _background.destroy();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // The panel's [LayerShellWindow] establishes the ambient [View] (and a
-    // [WindowScope] exposing the panel controller). Nesting [WindowManager]
-    // *inside* it means WindowManager takes its ViewAnchor branch (rendering
-    // [child] plus any registered windows). Placed at the root instead,
-    // WindowManager would drop its child.
-    return LayerShellWindow(
-      controller: _panel,
-      child: const WindowManager(
-        child: _PanelBody(),
-      ),
+    // Each [LayerShellWindow] renders into its own controller's view, so a
+    // [ViewCollection] is how one Flutter process drives several top-level
+    // layer-shell surfaces at once.
+    return ViewCollection(
+      views: <Widget>[
+        LayerShellWindow(
+          controller: _background,
+          child: const _LavaLampBackground(),
+        ),
+        // The panel's [LayerShellWindow] establishes the ambient [View] (and a
+        // [WindowScope] exposing the panel controller). Nesting [WindowManager]
+        // *inside* it means WindowManager takes its ViewAnchor branch (rendering
+        // [child] plus any registered windows). Placed at the root instead,
+        // WindowManager would drop its child.
+        LayerShellWindow(
+          controller: _panel,
+          child: const WindowManager(child: _PanelBody()),
+        ),
+        LayerShellWindow(
+          controller: _bottomPanel,
+          child: const _EdgePanel(
+            color: _kBottomPanelColor,
+            label: 'bottom panel',
+          ),
+        ),
+        LayerShellWindow(
+          controller: _leftPanel,
+          child: const _EdgePanel(
+            color: _kLeftPanelColor,
+            label: 'left',
+            vertical: true,
+          ),
+        ),
+      ],
     );
   }
+}
+
+/// A plain coloured bar for the bottom and left edges — no interaction, just a
+/// visually unmistakable surface.
+class _EdgePanel extends StatelessWidget {
+  const _EdgePanel({
+    required this.color,
+    required this.label,
+    this.vertical = false,
+  });
+
+  final Color color;
+  final String label;
+
+  /// Rotates the label a quarter turn so it reads along a side bar.
+  final bool vertical;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget text = Text(
+      label,
+      style: const TextStyle(
+        color: Color(0xFFFFFFFF),
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+    if (vertical) {
+      text = RotatedBox(quarterTurns: 3, child: text);
+    }
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: ColoredBox(color: color, child: Center(child: text)),
+    );
+  }
+}
+
+/// Fills the background window with an animated metaball ("lava lamp") effect,
+/// painted on the GPU by `shaders/lava_lamp.frag`.
+class _LavaLampBackground extends StatefulWidget {
+  const _LavaLampBackground();
+
+  @override
+  State<_LavaLampBackground> createState() => _LavaLampBackgroundState();
+}
+
+class _LavaLampBackgroundState extends State<_LavaLampBackground>
+    with SingleTickerProviderStateMixin {
+  final ValueNotifier<double> _seconds = ValueNotifier<double>(0);
+  late final Ticker _ticker;
+  ui.FragmentShader? _shader;
+
+  @override
+  void initState() {
+    super.initState();
+    // The ticker feeds a notifier that [_LavaLampPainter] repaints from, so
+    // animating never rebuilds the widget tree. It starts once the shader is in.
+    _ticker = createTicker(
+      (Duration elapsed) => _seconds.value = elapsed.inMicroseconds / 1e6,
+    );
+    _loadShader();
+  }
+
+  Future<void> _loadShader() async {
+    final ui.FragmentProgram program = await ui.FragmentProgram.fromAsset(
+      'shaders/lava_lamp.frag',
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() => _shader = program.fragmentShader());
+    _ticker.start();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    _shader?.dispose();
+    _seconds.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ui.FragmentShader? shader = _shader;
+    if (shader == null) {
+      // The window's view is transparent, so paint *something* while the shader
+      // program is still loading.
+      return const ColoredBox(color: Color(0xFF120E20));
+    }
+    return CustomPaint(
+      size: Size.infinite,
+      painter: _LavaLampPainter(shader: shader, seconds: _seconds),
+    );
+  }
+}
+
+class _LavaLampPainter extends CustomPainter {
+  _LavaLampPainter({required this.shader, required this.seconds})
+    : super(repaint: seconds);
+
+  final ui.FragmentShader shader;
+  final ValueListenable<double> seconds;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Float slots are the shader's uniforms flattened in declaration order:
+    // 0,1 = uSize, 2 = uTime.
+    shader
+      ..setFloat(0, size.width)
+      ..setFloat(1, size.height)
+      ..setFloat(2, seconds.value);
+    canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
+  }
+
+  @override
+  bool shouldRepaint(_LavaLampPainter oldDelegate) =>
+      oldDelegate.shader != shader;
 }
 
 /// Hosts the panel UI and owns the popup window's lifecycle.
@@ -115,7 +323,7 @@ class _PanelBodyState extends State<_PanelBody> {
           slideX: true,
         ),
       ),
-      preferredConstraints: const BoxConstraints(maxWidth: 360, maxHeight: 280),
+      constraints: const BoxConstraints(maxWidth: 360, maxHeight: 280),
       delegate: _PopupDelegate(() {
         registry.unregister(entry);
         if (mounted) {
@@ -174,7 +382,7 @@ class _PanelContents extends StatelessWidget {
     return Directionality(
       textDirection: TextDirection.ltr,
       child: ColoredBox(
-        color: const Color(0xFF1E1E2E),
+        color: _kTopPanelColor,
         child: Center(
           child: GestureDetector(
             onTap: onToggle,

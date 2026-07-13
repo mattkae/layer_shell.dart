@@ -10,6 +10,12 @@ windows to screen edges, reserve exclusive space, and stack them on the
 background/top/overlay layers — everything you need for bars, docks, wallpapers
 and notification surfaces.
 
+## Demo
+
+<video src="https://github.com/mattkae/layer_shell.dart/raw/master/demo.mp4" controls width="100%"></video>
+
+> Not seeing the video? [Watch demo.mp4 directly](https://github.com/mattkae/layer_shell.dart/raw/master/demo.mp4).
+
 ## ⚠️ Experimental
 
 This package is built on Flutter's **experimental windowing APIs**, which are
