@@ -125,29 +125,13 @@ List<MonitorInfo> listMonitors() {
 List<LayerShellEdge> anchorEdgesForPosition(String anchor) {
   switch (anchor) {
     case 'bottom':
-      return [
-        LayerShellEdge.bottom,
-        LayerShellEdge.left,
-        LayerShellEdge.right
-      ];
+      return [LayerShellEdge.bottom, LayerShellEdge.left, LayerShellEdge.right];
     case 'left':
-      return [
-        LayerShellEdge.left,
-        LayerShellEdge.top,
-        LayerShellEdge.bottom
-      ];
+      return [LayerShellEdge.left, LayerShellEdge.top, LayerShellEdge.bottom];
     case 'right':
-      return [
-        LayerShellEdge.right,
-        LayerShellEdge.top,
-        LayerShellEdge.bottom
-      ];
+      return [LayerShellEdge.right, LayerShellEdge.top, LayerShellEdge.bottom];
     default: // 'top'
-      return [
-        LayerShellEdge.top,
-        LayerShellEdge.left,
-        LayerShellEdge.right
-      ];
+      return [LayerShellEdge.top, LayerShellEdge.left, LayerShellEdge.right];
   }
 }
 
@@ -350,6 +334,9 @@ class LayershellWindowController extends RegularWindowController
 
   @override
   void activate() => _window.present();
+
+  @override
+  bool get isDestroyed => _destroyed;
 
   @override
   ffi.Pointer<ffi.Void> get windowHandle {
