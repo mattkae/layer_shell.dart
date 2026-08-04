@@ -332,6 +332,76 @@ class LayershellWindowController extends RegularWindowController
   void setSize(Size size) =>
       _window.resize(size.width.toInt(), size.height.toInt());
 
+  /// Sets the distance between this surface and [edge], in surface-local
+  /// coordinates. Has no effect on an edge the surface is not anchored to.
+  ///
+  /// Unlike `gtk_layer_init_for_window()`, this is legal at any point in the
+  /// window's life, so a client can move a surface after it is mapped.
+  ///
+  /// The compositor folds the anchored edge's margin into the exclusive zone —
+  /// per wlr-layer-shell's `set_margin`, "the exclusive zone includes the
+  /// margin" — so a panel that floats itself off an edge does *not* also need
+  /// to grow its own zone to keep other windows out of the gap.
+  void setMargin(LayerShellEdge edge, int margin) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    _window.layerSetMargin(edge, margin);
+  }
+
+  /// Returns the margin currently set for [edge].
+  int getMargin(LayerShellEdge edge) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.layerGetMargin(edge);
+  }
+
+  /// Reserves [zone] px measured from the anchored edge.
+  ///
+  /// A positive value asks the compositor to keep other windows out of that
+  /// strip. Zero asks to be moved clear of other surfaces' exclusive zones,
+  /// and -1 asks to be left where it is and stretched to the edges it is
+  /// anchored to. Also turns off automatic exclusive zone calculation.
+  void setExclusiveZone(int zone) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    _window.layerSetExclusiveZone(zone);
+  }
+
+  /// Returns the exclusive zone currently set, whether manually or
+  /// automatically.
+  int get exclusiveZone {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.layerGetExclusiveZone();
+  }
+
+  /// Pushes queued layer-shell state to the compositor without waiting for the
+  /// next GTK frame.
+  ///
+  /// A property set after the surface is mapped only queues a resize, so a
+  /// change that does not itself cause a repaint may otherwise sit unsent.
+  ///
+  /// Returns false when the loaded gtk-layer-shell predates 0.7 and has no
+  /// `gtk_layer_try_force_commit`; the change then rides the next frame.
+  bool tryForceCommit() {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    try {
+      _window.layerTryForceCommit();
+      return true;
+    } on ArgumentError {
+      // Symbol lookups in this package are lazily-resolved top-level finals, so
+      // a symbol missing from the loaded library throws on first use here
+      // rather than at load time.
+      return false;
+    }
+  }
+
   @override
   void activate() => _window.present();
 
