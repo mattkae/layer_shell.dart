@@ -140,13 +140,62 @@ class _MyShellState extends State<MyShell> {
 | Symbol | Purpose |
 | --- | --- |
 | `initLayerShell()` | Installs the windowing owner globally. Call once before creating controllers. |
-| `LayershellWindowController` | Wraps a Flutter Linux window and applies layer-shell properties (layer, anchors, exclusive zone, keyboard mode, monitor). |
+| `LayershellWindowController` | Wraps a Flutter Linux window and applies layer-shell properties (layer, anchors, exclusive zone, margins, keyboard mode, monitor, namespace). |
 | `LayerShellWindow` | Widget that renders `child` into a controller's view. Place inside a `ViewCollection`. |
 | `listMonitors()` / `MonitorInfo` | Enumerate connected monitors (name, model, position, handle). |
 | `getScreenSize()` | Primary monitor size in logical pixels. |
-| `DynamicLayerShellViews` | A `ChangeNotifier` singleton for adding/removing layer-shell views at runtime. |
+| `isLayerShellSupported()` | Whether the compositor advertises `zwlr_layer_shell_v1`. Call after `initLayerShell()`. |
+| `layerShellProtocolVersion()` | The negotiated protocol version, for gating version-dependent behaviour. |
+| `layerShellLibraryVersion()` | The loaded gtk-layer-shell version, as `"major.minor.micro"`. |
 | `anchorEdgesForPosition()` / `layerFromString()` | Helpers mapping `'top'`/`'bottom'`/`'left'`/`'right'` and layer names to enums. |
 | `LayerShellLayer` / `LayerShellEdge` / `LayerShellKeyboardMode` | Layer-shell enums. |
+
+### Changing a surface after it is mapped
+
+Every layer-shell property except the namespace can be changed at runtime:
+
+| Member | Protocol request |
+| --- | --- |
+| `setLayer()` / `layer` | `set_layer` |
+| `setAnchor()` / `getAnchor()` / `setAnchorEdges()` | `set_anchor` |
+| `setMargin()` / `getMargin()` | `set_margin` |
+| `setExclusiveZone()` / `exclusiveZone` | `set_exclusive_zone` |
+| `enableAutoExclusiveZone()` / `autoExclusiveZoneEnabled` | `set_exclusive_zone`, recomputed from the window's size |
+| `setKeyboardMode()` / `keyboardMode` | `set_keyboard_interactivity` |
+| `setSize()` | `set_size` |
+| `setMonitor()` / `monitor` | the `output` argument of `get_layer_surface` (recreates the surface) |
+| `namespace` | the `namespace` argument of `get_layer_surface` (read-only; pass it to the constructor) |
+| `setRespectClose()` / `respectClose` | whether a `closed` event is forwarded to GTK (needs gtk-layer-shell 0.10) |
+| `destroy()` / `isDestroyed` | `destroy` |
+
+A change made after the surface is mapped only *queues* a resize, so one that
+does not itself cause a repaint may sit unsent until the next GTK frame. Call
+`tryForceCommit()` to push it immediately:
+
+```dart
+panel.setLayer(LayerShellLayer.overlay);
+panel.tryForceCommit();
+```
+
+The getters read gtk-layer-shell's record of what was *requested*, not what the
+compositor acknowledged; `contentSize` is the exception and reports the size the
+window actually has.
+
+### Protocol coverage
+
+This package covers every request in `zwlr_layer_shell_v1` /
+`zwlr_layer_surface_v1` up to **protocol version 4**, which is what
+gtk-layer-shell 0.10.0 implements. `ack_configure` and `get_popup` are handled
+for you — the former inside gtk-layer-shell, the latter by Flutter's
+`PopupWindowController` (see the example).
+
+`set_exclusive_edge` (added in **protocol version 5**, for disambiguating which
+edge an exclusive zone applies to when a surface is anchored to a corner) has no
+`gtk_layer_*` wrapper and so cannot be issued through this package. If you need
+it, `LayershellWindowController.zwlrLayerSurfaceHandle` exposes the raw
+`zwlr_layer_surface_v1` proxy to marshal yourself — check
+`layerShellProtocolVersion() >= 5` first, and note that requests sent that way
+bypass gtk-layer-shell's cached state.
 
 ## Example
 

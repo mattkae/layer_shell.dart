@@ -59,6 +59,10 @@ class _ExampleAppState extends State<_ExampleApp> {
       height: 40,
       exclusiveZone: 40,
       monitor: _monitor?.gdkMonitor,
+      // Compositors surface the namespace in window rules and debug output.
+      // It is an argument to the request that creates the surface, so it is
+      // the one layer-shell property that cannot be changed later.
+      namespace: 'layer-shell-example-top',
     );
 
     // Two more bars, anchored to the bottom and left edges. Each reserves its
@@ -74,6 +78,7 @@ class _ExampleAppState extends State<_ExampleApp> {
       height: 48,
       exclusiveZone: 48,
       monitor: _monitor?.gdkMonitor,
+      namespace: 'layer-shell-example-bottom',
     );
 
     _leftPanel = LayershellWindowController(
@@ -85,8 +90,13 @@ class _ExampleAppState extends State<_ExampleApp> {
       ],
       keyboardMode: LayerShellKeyboardMode.none,
       width: 72,
-      exclusiveZone: 72,
+      // Rather than repeating the 72 as an explicit zone, let gtk-layer-shell
+      // derive it from the window's own width along whichever edge it is
+      // anchored to. The panel's "side bar → right" button re-anchors this
+      // window at runtime, and the reserved strip follows it across.
+      autoExclusiveZone: true,
       monitor: _monitor?.gdkMonitor,
+      namespace: 'layer-shell-example-side',
     );
 
     // A wallpaper on the bottom-most layer. Anchoring all four edges (with no
@@ -109,6 +119,7 @@ class _ExampleAppState extends State<_ExampleApp> {
       keyboardMode: LayerShellKeyboardMode.none,
       exclusiveZone: -1,
       monitor: _monitor?.gdkMonitor,
+      namespace: 'layer-shell-example-wallpaper',
     );
   }
 
@@ -139,7 +150,9 @@ class _ExampleAppState extends State<_ExampleApp> {
         // WindowManager would drop its child.
         LayerShellWindow(
           controller: _panel,
-          child: const WindowManager(child: _PanelBody()),
+          child: WindowManager(
+            child: _PanelBody(panel: _panel, leftPanel: _leftPanel),
+          ),
         ),
         LayerShellWindow(
           controller: _bottomPanel,
@@ -285,7 +298,13 @@ class _LavaLampPainter extends CustomPainter {
 /// [WindowRegistry] (via [WindowRegistry.of]) and the parent panel controller
 /// (via [WindowScope.of]).
 class _PanelBody extends StatefulWidget {
-  const _PanelBody();
+  const _PanelBody({required this.panel, required this.leftPanel});
+
+  /// This panel's own controller, driven by the layer toggle.
+  final LayershellWindowController panel;
+
+  /// The side bar, driven by the edge toggle.
+  final LayershellWindowController leftPanel;
 
   @override
   State<_PanelBody> createState() => _PanelBodyState();
@@ -295,6 +314,35 @@ class _PanelBodyState extends State<_PanelBody> {
   /// Keyed onto the button so its rect can anchor the popup.
   final GlobalKey _buttonKey = GlobalKey();
   PopupWindowController? _popup;
+
+  /// Moves this panel between the top and overlay layers.
+  ///
+  /// Every layer-shell property except the namespace can be changed after the
+  /// surface is mapped. The change only queues a resize though, and flipping
+  /// the layer does not repaint anything by itself, so `tryForceCommit()` is
+  /// what actually gets it to the compositor before the next frame.
+  void _toggleLayer() {
+    widget.panel.setLayer(widget.panel.layer == LayerShellLayer.top
+        ? LayerShellLayer.overlay
+        : LayerShellLayer.top);
+    widget.panel.tryForceCommit();
+    setState(() {});
+  }
+
+  /// Re-anchors the side bar to the opposite edge of the output.
+  ///
+  /// The exclusive zone follows the anchor, so the compositor moves the
+  /// reserved strip across with it.
+  void _toggleSideBarEdge() {
+    final onLeft = widget.leftPanel.getAnchor(LayerShellEdge.left);
+    widget.leftPanel.setAnchorEdges(<LayerShellEdge>[
+      onLeft ? LayerShellEdge.right : LayerShellEdge.left,
+      LayerShellEdge.top,
+      LayerShellEdge.bottom,
+    ]);
+    widget.leftPanel.tryForceCommit();
+    setState(() {});
+  }
 
   void _toggle() {
     if (_popup != null) {
@@ -351,6 +399,10 @@ class _PanelBodyState extends State<_PanelBody> {
       buttonKey: _buttonKey,
       open: _popup != null,
       onToggle: _toggle,
+      layer: widget.panel.layer,
+      onToggleLayer: _toggleLayer,
+      sideBarOnLeft: widget.leftPanel.getAnchor(LayerShellEdge.left),
+      onToggleSideBarEdge: _toggleSideBarEdge,
     );
   }
 }
@@ -371,11 +423,19 @@ class _PanelContents extends StatelessWidget {
     required this.buttonKey,
     required this.open,
     required this.onToggle,
+    required this.layer,
+    required this.onToggleLayer,
+    required this.sideBarOnLeft,
+    required this.onToggleSideBarEdge,
   });
 
   final Key buttonKey;
   final bool open;
   final VoidCallback onToggle;
+  final LayerShellLayer layer;
+  final VoidCallback onToggleLayer;
+  final bool sideBarOnLeft;
+  final VoidCallback onToggleSideBarEdge;
 
   @override
   Widget build(BuildContext context) {
@@ -384,21 +444,51 @@ class _PanelContents extends StatelessWidget {
       child: ColoredBox(
         color: _kTopPanelColor,
         child: Center(
-          child: GestureDetector(
-            onTap: onToggle,
-            child: Container(
-              key: buttonKey,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF45475A),
-                borderRadius: BorderRadius.circular(6),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              _PanelButton(
+                key: buttonKey,
+                label: open ? 'Close popup' : 'Open popup',
+                onTap: onToggle,
               ),
-              child: Text(
-                open ? 'Close popup' : 'Open popup',
-                style: const TextStyle(color: Color(0xFFCDD6F4), fontSize: 14),
+              const SizedBox(width: 8),
+              _PanelButton(
+                label: 'layer: ${layer.name}',
+                onTap: onToggleLayer,
               ),
-            ),
+              const SizedBox(width: 8),
+              _PanelButton(
+                label: sideBarOnLeft ? 'side bar → right' : 'side bar → left',
+                onTap: onToggleSideBarEdge,
+              ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PanelButton extends StatelessWidget {
+  const _PanelButton({super.key, required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF45475A),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(color: Color(0xFFCDD6F4), fontSize: 14),
         ),
       ),
     );

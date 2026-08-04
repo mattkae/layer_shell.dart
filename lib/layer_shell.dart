@@ -79,6 +79,31 @@ void initLayerShell() {
 /// Returns the primary monitor's size in logical pixels.
 Size getScreenSize() => GdkDisplay.getDefault().getMonitor(0).getGeometry();
 
+/// Whether the current compositor advertises `zwlr_layer_shell_v1`.
+///
+/// Only meaningful once GTK is up and connected to the display, so call it
+/// after [initLayerShell] rather than at the top of `main()`. Returns false on
+/// X11 and on Wayland compositors without layer-shell support.
+bool isLayerShellSupported() => layerShellIsSupported();
+
+/// The version of `zwlr_layer_shell_v1` negotiated with the compositor, or 0
+/// when it is unsupported.
+///
+/// Use this to gate version-dependent behaviour:
+/// [LayerShellKeyboardMode.onDemand] needs 4, and `set_exclusive_edge` needs 5
+/// (which this package cannot issue — see
+/// [LayershellWindowController.zwlrLayerSurfaceHandle]).
+int layerShellProtocolVersion() => layerShellGetProtocolVersion();
+
+/// The version of the loaded gtk-layer-shell library, as `"major.minor.micro"`.
+///
+/// Useful when reporting bugs, and for the members that need a recent
+/// gtk-layer-shell: [LayershellWindowController.tryForceCommit] needs 0.9 and
+/// [LayershellWindowController.setRespectClose] needs 0.10.
+String layerShellLibraryVersion() => '${layerShellGetMajorVersion()}'
+    '.${layerShellGetMinorVersion()}'
+    '.${layerShellGetMicroVersion()}';
+
 /// Monitor information returned by [listMonitors].
 class MonitorInfo {
   const MonitorInfo({
@@ -170,7 +195,9 @@ class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
     int? width,
     int? height,
     int? exclusiveZone,
+    bool autoExclusiveZone = false,
     ffi.Pointer<ffi.NativeType>? monitor,
+    String? namespace,
   }) {
     final controller = LayershellWindowController._internal(
       owner: this,
@@ -180,7 +207,9 @@ class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
       width: width,
       height: height,
       exclusiveZone: exclusiveZone,
+      autoExclusiveZone: autoExclusiveZone,
       monitor: monitor,
+      namespace: namespace,
     );
     registrar.register(
       viewId: controller.rootView.viewId,
@@ -196,6 +225,18 @@ class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
   void _unregisterLayerShellWindow(int viewId) => registrar.unregister(viewId);
 }
 
+/// A Flutter window backed by a `zwlr_layer_surface_v1`.
+///
+/// Every layer-shell property except the namespace can be changed after the
+/// surface is mapped. Such a change only *queues* a resize, so one that does
+/// not itself cause a repaint may sit unsent until the next GTK frame; call
+/// [tryForceCommit] to push it immediately.
+///
+/// The getters here read gtk-layer-shell's client-side record of what was
+/// requested, not what the compositor has acknowledged. A compositor is free to
+/// ignore a request — for instance to clamp an exclusive zone — and that will
+/// not be visible through them. [contentSize] is the exception: it reports the
+/// size the window actually has.
 class LayershellWindowController extends RegularWindowController
     implements WindowControllerLinux {
   /// Create a new LayershellWindowController.
@@ -203,6 +244,17 @@ class LayershellWindowController extends RegularWindowController
   /// [initLayerShell] must have been called first. This delegates to
   /// [ExtendedWindowingOwnerLinux.createLayerShellWindowController] so the
   /// window is always registered with the system.
+  ///
+  /// [namespace] is the `get_layer_surface` namespace argument, which
+  /// compositors use to identify the surface's purpose (`"panel"`, `"notify"`,
+  /// …) in rules and debug output. It is an argument to the request that
+  /// creates the surface, so unlike the other properties here it cannot be
+  /// changed afterwards.
+  ///
+  /// [exclusiveZone] and [autoExclusiveZone] are mutually exclusive: pass a
+  /// zone to reserve exactly that many pixels, or set [autoExclusiveZone] to
+  /// let gtk-layer-shell derive the zone from the window's own size along the
+  /// anchored edge. An explicit [exclusiveZone] wins.
   factory LayershellWindowController({
     LayerShellLayer layer = LayerShellLayer.top,
     List<LayerShellEdge> anchorEdges = const [
@@ -214,7 +266,9 @@ class LayershellWindowController extends RegularWindowController
     int? width,
     int? height,
     int? exclusiveZone,
+    bool autoExclusiveZone = false,
     ffi.Pointer<ffi.NativeType>? monitor,
+    String? namespace,
   }) {
     if (!isWindowingEnabled) {
       throw UnsupportedError(_kWindowingDisabledErrorMessage);
@@ -231,7 +285,9 @@ class LayershellWindowController extends RegularWindowController
       width: width,
       height: height,
       exclusiveZone: exclusiveZone,
+      autoExclusiveZone: autoExclusiveZone,
       monitor: monitor,
+      namespace: namespace,
     );
   }
 
@@ -248,7 +304,9 @@ class LayershellWindowController extends RegularWindowController
     int? width,
     int? height,
     int? exclusiveZone,
+    bool autoExclusiveZone = false,
     ffi.Pointer<ffi.NativeType>? monitor,
+    String? namespace,
   })  : _owner = owner,
         _window = GtkWindow(GtkWindowType.toplevel),
         super.empty() {
@@ -268,12 +326,18 @@ class LayershellWindowController extends RegularWindowController
     // gtk-layer-shell requires init *before* the window is realized/mapped, so
     // apply every layer-shell setting before realize().
     _window.layerInitForWindow();
+    if (namespace != null) {
+      _window.layerSetNamespace(namespace);
+    }
     if (monitor != null && monitor.address != 0) {
       _window.layerSetMonitor(monitor);
     }
+    // Order matters: gtk_layer_set_exclusive_zone() turns auto mode back off,
+    // so these two are alternatives rather than a sequence.
     if (exclusiveZone != null) {
-      _window.layerAutoExclusiveZoneEnable();
       _window.layerSetExclusiveZone(exclusiveZone);
+    } else if (autoExclusiveZone) {
+      _window.layerAutoExclusiveZoneEnable();
     }
     for (final edge in anchorEdges) {
       _window.layerSetAnchor(edge, true);
@@ -385,7 +449,7 @@ class LayershellWindowController extends RegularWindowController
   /// A property set after the surface is mapped only queues a resize, so a
   /// change that does not itself cause a repaint may otherwise sit unsent.
   ///
-  /// Returns false when the loaded gtk-layer-shell predates 0.7 and has no
+  /// Returns false when the loaded gtk-layer-shell predates 0.9 and has no
   /// `gtk_layer_try_force_commit`; the change then rides the next frame.
   bool tryForceCommit() {
     if (_destroyed) {
@@ -400,6 +464,194 @@ class LayershellWindowController extends RegularWindowController
       // rather than at load time.
       return false;
     }
+  }
+
+  /// Moves this surface to [layer].
+  ///
+  /// Per wlr-layer-shell's `set_layer`, the change takes effect on the next
+  /// commit; whether the surface keeps keyboard focus across the move is up to
+  /// the compositor, and an `exclusive` keyboard mode only applies on the top
+  /// and overlay layers.
+  ///
+  /// Requires protocol version 2; see [layerShellProtocolVersion].
+  void setLayer(LayerShellLayer newLayer) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    _window.layerSetLayer(newLayer);
+  }
+
+  /// The layer this surface is currently on.
+  LayerShellLayer get layer {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.layerGetLayer();
+  }
+
+  /// Anchors this surface to [edge], or releases it when [anchorToEdge] is
+  /// false.
+  ///
+  /// Anchoring to two opposite edges stretches the surface between them and
+  /// makes its size along that axis compositor-controlled; anchoring to none
+  /// centers it. Changing anchors at runtime therefore usually produces a
+  /// `configure` with a new size.
+  void setAnchor(LayerShellEdge edge, bool anchorToEdge) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    _window.layerSetAnchor(edge, anchorToEdge);
+  }
+
+  /// Whether this surface is anchored to [edge].
+  bool getAnchor(LayerShellEdge edge) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.layerGetAnchor(edge);
+  }
+
+  /// Replaces the whole anchor set: every edge in [edges] is anchored and every
+  /// other edge is released.
+  ///
+  /// The runtime equivalent of the constructor's `anchorEdges` argument.
+  void setAnchorEdges(List<LayerShellEdge> edges) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    for (final edge in LayerShellEdge.values) {
+      _window.layerSetAnchor(edge, edges.contains(edge));
+    }
+  }
+
+  /// Sets how this surface takes keyboard focus.
+  ///
+  /// [LayerShellKeyboardMode.onDemand] needs protocol version 4; older
+  /// compositors fall back to the legacy on/off interactivity, so check
+  /// [layerShellProtocolVersion] if the distinction matters.
+  void setKeyboardMode(LayerShellKeyboardMode mode) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    _window.layerSetKeyboardMode(mode);
+  }
+
+  /// The keyboard mode currently set.
+  LayerShellKeyboardMode get keyboardMode {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.layerGetKeyboardMode();
+  }
+
+  /// Moves this surface to [monitor], a `GdkMonitor*` such as
+  /// [MonitorInfo.gdkMonitor].
+  ///
+  /// The output is an argument to `get_layer_surface`, so gtk-layer-shell
+  /// implements this by tearing the surface down and recreating it on the new
+  /// output. Expect the surface to be briefly unmapped.
+  void setMonitor(ffi.Pointer<ffi.NativeType> monitor) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    _window.layerSetMonitor(monitor);
+  }
+
+  /// The `GdkMonitor*` this surface is on, or `nullptr` when the compositor was
+  /// left to choose.
+  ffi.Pointer<ffi.NativeType> get monitor {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.layerGetMonitor();
+  }
+
+  /// The namespace this surface was created with.
+  ///
+  /// Fixed at construction — see the `namespace` argument of
+  /// [LayershellWindowController.new].
+  String get namespace {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.layerGetNamespace();
+  }
+
+  /// Lets gtk-layer-shell derive the exclusive zone from this window's own size
+  /// along the edge it is anchored to, updating it as the window resizes.
+  ///
+  /// Mutually exclusive with [setExclusiveZone], which turns this back off.
+  void enableAutoExclusiveZone() {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    _window.layerAutoExclusiveZoneEnable();
+  }
+
+  /// Whether the exclusive zone is being derived automatically.
+  bool get autoExclusiveZoneEnabled {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.layerAutoExclusiveZoneIsEnabled();
+  }
+
+  /// Sets whether a compositor `closed` event is forwarded to GTK.
+  ///
+  /// wlr-layer-shell sends `closed` when the surface can no longer be shown —
+  /// its output was unplugged, or the compositor is dismissing it. Since
+  /// gtk-layer-shell 0.10 this is ignored by default; turning it on raises a
+  /// GTK `delete-event`, which destroys the window unless something handles it,
+  /// and that surfaces here as [isDestroyed].
+  ///
+  /// Requires gtk-layer-shell 0.10 or newer; throws [UnsupportedError]
+  /// otherwise. See [layerShellLibraryVersion].
+  void setRespectClose(bool respectClose) {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    _requireSymbol(
+        'gtk_layer_set_respect_close', () => _window.layerSetRespectClose(respectClose));
+  }
+
+  /// Whether a compositor `closed` event is forwarded to GTK.
+  ///
+  /// Requires gtk-layer-shell 0.10 or newer; throws [UnsupportedError]
+  /// otherwise.
+  bool get respectClose {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _requireSymbol(
+        'gtk_layer_get_respect_close', () => _window.layerGetRespectClose());
+  }
+
+  /// Runs [body], turning the [ArgumentError] a missing [symbol] raises into an
+  /// [UnsupportedError] naming the loaded library version.
+  ///
+  /// Symbol lookups in this package are lazily-resolved top-level finals, so a
+  /// symbol absent from the loaded gtk-layer-shell throws on first use rather
+  /// than at load time.
+  static T _requireSymbol<T>(String symbol, T Function() body) {
+    try {
+      return body();
+    } on ArgumentError {
+      throw UnsupportedError(
+          'gtk-layer-shell ${layerShellLibraryVersion()} has no $symbol().');
+    }
+  }
+
+  /// The raw `zwlr_layer_surface_v1` proxy backing this window.
+  ///
+  /// An escape hatch for requests gtk-layer-shell does not wrap — currently
+  /// `set_exclusive_edge` (protocol version 5). Marshalling on this proxy
+  /// bypasses gtk-layer-shell's cached state, so the getters on this class will
+  /// not reflect anything sent that way.
+  ffi.Pointer<ffi.NativeType> get zwlrLayerSurfaceHandle {
+    if (_destroyed) {
+      throw StateError('Window has been destroyed.');
+    }
+    return _window.layerGetZwlrLayerSurfaceV1();
   }
 
   @override

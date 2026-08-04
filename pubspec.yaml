@@ -1,7 +1,7 @@
 name: layer_shell
 description: Create panels and other desktop components for Wayland using the
   Layer Shell protocol — powered by Flutter.
-version: 0.2.0
+version: 0.3.0
 publish_to: none
 
 environment:
