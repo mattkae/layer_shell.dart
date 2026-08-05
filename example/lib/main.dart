@@ -1,5 +1,5 @@
-// WindowManager/WindowRegistry/WindowEntry are `@internal` in Flutter's
-// experimental windowing API; suppress the internal-member lint here.
+// PopupWindow/PopupWindowController/WindowPositioner are `@internal` in
+// Flutter's experimental windowing API; suppress the internal-member lint here.
 // ignore_for_file: invalid_use_of_internal_member
 import 'dart:ui' as ui;
 
@@ -39,6 +39,13 @@ class _ExampleAppState extends State<_ExampleApp> {
   late final LayershellWindowController _leftPanel;
   late final LayershellWindowController _background;
   MonitorInfo? _monitor;
+
+  /// The popup opened from the panel, or null when it is closed.
+  ///
+  /// It lives here rather than in [_PanelBody] because a popup is a top-level
+  /// window: it renders into its own view and so has to be a sibling of the
+  /// panels in the root [ViewCollection], not a descendant of one of them.
+  PopupWindowController? _popup;
 
   @override
   void initState() {
@@ -123,8 +130,45 @@ class _ExampleAppState extends State<_ExampleApp> {
     );
   }
 
+  /// Opens the popup anchored to [anchorRect], or closes it if already open.
+  ///
+  /// [anchorRect] is in the panel window's coordinate space; the compositor
+  /// positions the popup relative to it via the [WindowPositioner].
+  void _togglePopup(Rect anchorRect) {
+    if (_popup != null) {
+      // Closing routes through the delegate's onWindowDestroyed (below), which
+      // clears the state — the same path the compositor takes when the popup
+      // auto-dismisses on focus loss.
+      _popup!.destroy();
+      return;
+    }
+
+    setState(() {
+      _popup = PopupWindowController(
+        parent: _panel,
+        anchorRect: anchorRect,
+        positioner: const WindowPositioner(
+          parentAnchor: WindowPositionerAnchor.bottomLeft,
+          childAnchor: WindowPositionerAnchor.topLeft,
+          offset: Offset(0, 4),
+          constraintAdjustment: WindowPositionerConstraintAdjustment(
+            flipY: true,
+            slideX: true,
+          ),
+        ),
+        constraints: const BoxConstraints(maxWidth: 360, maxHeight: 280),
+        delegate: _PopupDelegate(() {
+          if (mounted) {
+            setState(() => _popup = null);
+          }
+        }),
+      );
+    });
+  }
+
   @override
   void dispose() {
+    _popup?.destroy();
     _panel.destroy();
     _bottomPanel.destroy();
     _leftPanel.destroy();
@@ -143,15 +187,13 @@ class _ExampleAppState extends State<_ExampleApp> {
           controller: _background,
           child: const _LavaLampBackground(),
         ),
-        // The panel's [LayerShellWindow] establishes the ambient [View] (and a
-        // [WindowScope] exposing the panel controller). Nesting [WindowManager]
-        // *inside* it means WindowManager takes its ViewAnchor branch (rendering
-        // [child] plus any registered windows). Placed at the root instead,
-        // WindowManager would drop its child.
         LayerShellWindow(
           controller: _panel,
-          child: WindowManager(
-            child: _PanelBody(panel: _panel, leftPanel: _leftPanel),
+          child: _PanelBody(
+            panel: _panel,
+            leftPanel: _leftPanel,
+            popupOpen: _popup != null,
+            onTogglePopup: _togglePopup,
           ),
         ),
         LayerShellWindow(
@@ -169,6 +211,14 @@ class _ExampleAppState extends State<_ExampleApp> {
             vertical: true,
           ),
         ),
+        // A popup is an ordinary Flutter window parented to the panel's
+        // layer-shell surface, so it joins the collection as a sibling view for
+        // as long as it is open.
+        if (_popup != null)
+          PopupWindow(
+            controller: _popup!,
+            child: _PopupContents(onClose: _popup!.destroy),
+          ),
       ],
     );
   }
@@ -292,19 +342,31 @@ class _LavaLampPainter extends CustomPainter {
       oldDelegate.shader != shader;
 }
 
-/// Hosts the panel UI and owns the popup window's lifecycle.
+/// Hosts the panel UI.
 ///
-/// This lives *below* [WindowManager] so its [BuildContext] can resolve the
-/// [WindowRegistry] (via [WindowRegistry.of]) and the parent panel controller
-/// (via [WindowScope.of]).
+/// The popup this opens is owned by [_ExampleAppState] rather than by this
+/// widget, because it renders into a view of its own and so has to sit beside
+/// the panels in the root [ViewCollection]. All this does is measure the button
+/// and hand the resulting anchor rect up.
 class _PanelBody extends StatefulWidget {
-  const _PanelBody({required this.panel, required this.leftPanel});
+  const _PanelBody({
+    required this.panel,
+    required this.leftPanel,
+    required this.popupOpen,
+    required this.onTogglePopup,
+  });
 
   /// This panel's own controller, driven by the layer toggle.
   final LayershellWindowController panel;
 
   /// The side bar, driven by the edge toggle.
   final LayershellWindowController leftPanel;
+
+  /// Whether the popup is currently open, for the button's pressed state.
+  final bool popupOpen;
+
+  /// Opens or closes the popup, anchored to the rect passed up.
+  final ValueChanged<Rect> onTogglePopup;
 
   @override
   State<_PanelBody> createState() => _PanelBodyState();
@@ -313,7 +375,6 @@ class _PanelBody extends StatefulWidget {
 class _PanelBodyState extends State<_PanelBody> {
   /// Keyed onto the button so its rect can anchor the popup.
   final GlobalKey _buttonKey = GlobalKey();
-  PopupWindowController? _popup;
 
   /// Moves this panel between the top and overlay layers.
   ///
@@ -345,59 +406,16 @@ class _PanelBodyState extends State<_PanelBody> {
   }
 
   void _toggle() {
-    if (_popup != null) {
-      // Closing routes through the delegate's onWindowDestroyed (below), which
-      // unregisters the entry and clears state — the same path the compositor
-      // takes when the popup auto-dismisses on focus loss.
-      _popup!.destroy();
-      return;
-    }
-
-    final registry = WindowRegistry.of(context);
     final box = _buttonKey.currentContext!.findRenderObject() as RenderBox;
     // Rect in the panel window's coordinate space that the popup anchors to.
-    final anchorRect = box.localToGlobal(Offset.zero) & box.size;
-
-    late final WindowEntry entry;
-    final controller = PopupWindowController(
-      parent: WindowScope.of(context), // the panel controller
-      anchorRect: anchorRect,
-      positioner: const WindowPositioner(
-        parentAnchor: WindowPositionerAnchor.bottomLeft,
-        childAnchor: WindowPositionerAnchor.topLeft,
-        offset: Offset(0, 4),
-        constraintAdjustment: WindowPositionerConstraintAdjustment(
-          flipY: true,
-          slideX: true,
-        ),
-      ),
-      constraints: const BoxConstraints(maxWidth: 360, maxHeight: 280),
-      delegate: _PopupDelegate(() {
-        registry.unregister(entry);
-        if (mounted) {
-          setState(() => _popup = null);
-        }
-      }),
-    );
-    entry = WindowEntry(
-      controller: controller,
-      builder: (_) => _PopupContents(onClose: controller.destroy),
-    );
-    registry.register(entry);
-    setState(() => _popup = controller);
-  }
-
-  @override
-  void dispose() {
-    _popup?.destroy();
-    super.dispose();
+    widget.onTogglePopup(box.localToGlobal(Offset.zero) & box.size);
   }
 
   @override
   Widget build(BuildContext context) {
     return _PanelContents(
       buttonKey: _buttonKey,
-      open: _popup != null,
+      open: widget.popupOpen,
       onToggle: _toggle,
       layer: widget.panel.layer,
       onToggleLayer: _toggleLayer,

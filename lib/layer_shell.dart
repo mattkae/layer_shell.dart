@@ -32,6 +32,7 @@ export 'package:flutter/src/widgets/_window.dart'
         WindowRegistry,
         WindowEntry,
         WindowScope,
+        PopupWindow,
         PopupWindowController,
         PopupWindowControllerDelegate;
 export 'package:flutter/src/widgets/_window_positioner.dart'
@@ -183,7 +184,7 @@ class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
   /// Creates a layer-shell window controller and registers its native window
   /// and view with the owner's registrar.
   ///
-  /// Mirrors how the base owner implements [createRegularWindowController].
+  /// Mirrors how the base owner implements [WindowingOwner.createWindowController].
   LayershellWindowController createLayerShellWindowController({
     LayerShellLayer layer = LayerShellLayer.top,
     List<LayerShellEdge> anchorEdges = const [
@@ -237,8 +238,8 @@ class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
 /// ignore a request — for instance to clamp an exclusive zone — and that will
 /// not be visible through them. [contentSize] is the exception: it reports the
 /// size the window actually has.
-class LayershellWindowController extends RegularWindowController
-    implements WindowControllerLinux {
+class LayershellWindowController extends WindowController
+    implements BaseWindowControllerLinux {
   /// Create a new LayershellWindowController.
   ///
   /// [initLayerShell] must have been called first. This delegates to
@@ -291,7 +292,7 @@ class LayershellWindowController extends RegularWindowController
     );
   }
 
-  // Modelled on Flutter's RegularWindowControllerLinux, with the gtk-layer-shell
+  // Modelled on Flutter's WindowControllerLinux, with the gtk-layer-shell
   // setup inserted *before* the window is realized. gtk_layer_init_for_window()
   // and every layer-shell property must be applied before realize()/present(),
   // which is why we drive window creation here rather than reusing the SDK's
