@@ -1,0 +1,89 @@
+# Builds the package against the latest Flutter `master`.
+#
+# layer_shell consumes Flutter's private, experimental windowing APIs
+# (`package:flutter/src/widgets/_window_linux.dart` and friends), which upstream
+# changes without notice — even in patch releases. This job is an early-warning
+# signal for that: the nightly run turns a silent upstream break into a red
+# badge on the day it lands, rather than the next time someone happens to build.
+#
+# It does not run the example. `libgtk-layer-shell` is dlopen'd at runtime, so a
+# headless runner links fine, but actually launching a panel would need a live
+# Wayland compositor implementing zwlr_layer_shell_v1.
+
+name: Build against Flutter master
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # 06:00 UTC daily. This is the run that matters — see the header comment.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Analyze and build example (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Flutter's standard Linux desktop toolchain, plus libgtk-layer-shell-dev.
+      # The latter is not optional: example/linux/CMakeLists.txt declares
+      # `pkg_check_modules(GTK_LAYER_SHELL REQUIRED ...)`, so the build fails at
+      # CMake configure time without it.
+      #
+      # The runner image carries an older gtk-layer-shell than a current desktop
+      # (0.8.x vs 0.10.x). That is fine at build time: no minimum version is
+      # imposed, and the only 0.10-dependent binding (`setRespectClose()`) is
+      # symbol-guarded at runtime.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libgtk-3-dev \
+            libgtk-layer-shell-dev \
+            liblzma-dev
+
+      # cache: false is deliberate. Caching a key called "master" would pin a
+      # stale revision and defeat the entire point of this workflow.
+      - name: Set up Flutter (master channel)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          cache: false
+
+      # Persistent tool setting, master-channel only. Must run before the build
+      # so the feature flag is compiled in — initLayerShell() throws
+      # UnsupportedError when `isWindowingEnabled` is false.
+      - name: Enable windowing
+        run: flutter config --enable-windowing
+
+      # Its own step on purpose: when this job goes red, the framework revision
+      # and date are the first thing you want, without digging through logs.
+      - name: Report Flutter version
+        run: flutter --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Run from the repo root, which resolves and analyzes example/ as well.
+      # This is what turns an upstream rename of a private windowing API into a
+      # precise analyzer error instead of a compiler dump.
+      - name: Analyze
+        run: flutter analyze
+
+      # Exercises the CMake gtk-layer-shell discovery and link, plus the AOT
+      # Dart compile.
+      - name: Build example
+        working-directory: example
+        run: flutter build linux --release
