@@ -185,6 +185,8 @@ class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
   /// and view with the owner's registrar.
   ///
   /// Mirrors how the base owner implements [WindowingOwner.createWindowController].
+  ///
+  /// [keyboardMode] defaults to [LayerShellKeyboardMode.none].
   LayershellWindowController createLayerShellWindowController({
     LayerShellLayer layer = LayerShellLayer.top,
     List<LayerShellEdge> anchorEdges = const [
@@ -192,7 +194,7 @@ class ExtendedWindowingOwnerLinux extends WindowingOwnerLinux {
       LayerShellEdge.left,
       LayerShellEdge.right,
     ],
-    LayerShellKeyboardMode keyboardMode = LayerShellKeyboardMode.onDemand,
+    LayerShellKeyboardMode keyboardMode = LayerShellKeyboardMode.none,
     int? width,
     int? height,
     int? exclusiveZone,
@@ -256,6 +258,11 @@ class LayershellWindowController extends WindowController
   /// zone to reserve exactly that many pixels, or set [autoExclusiveZone] to
   /// let gtk-layer-shell derive the zone from the window's own size along the
   /// anchored edge. An explicit [exclusiveZone] wins.
+  ///
+  /// [keyboardMode] defaults to [LayerShellKeyboardMode.none], so the surface
+  /// takes no keyboard focus and does not steal it from the windows below it.
+  /// Pass another mode, or call [setKeyboardMode], for a surface that needs
+  /// keyboard input.
   factory LayershellWindowController({
     LayerShellLayer layer = LayerShellLayer.top,
     List<LayerShellEdge> anchorEdges = const [
@@ -263,7 +270,7 @@ class LayershellWindowController extends WindowController
       LayerShellEdge.left,
       LayerShellEdge.right,
     ],
-    LayerShellKeyboardMode keyboardMode = LayerShellKeyboardMode.onDemand,
+    LayerShellKeyboardMode keyboardMode = LayerShellKeyboardMode.none,
     int? width,
     int? height,
     int? exclusiveZone,

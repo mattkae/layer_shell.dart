@@ -12,6 +12,10 @@ not just at construction.
   `zwlrLayerSurfaceHandle` escape hatch.
 - New constructor arguments `namespace` (the `get_layer_surface` namespace, which
   compositors use in window rules) and `autoExclusiveZone`.
+- **Fixed:** `LayershellWindowController` defaulted `keyboardMode` to
+  `LayerShellKeyboardMode.onDemand`, so a surface took keyboard focus unless
+  one was passed explicitly. The default is now
+  `LayerShellKeyboardMode.none`.
 - **Fixed:** passing `exclusiveZone` also called
   `gtk_layer_auto_exclusive_zone_enable()`, which the following
   `gtk_layer_set_exclusive_zone()` immediately undid. Automatic zones are now
