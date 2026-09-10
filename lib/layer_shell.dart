@@ -712,6 +712,40 @@ class LayershellWindowController extends WindowController
 
   @override
   String get title => '';
+
+  /// Ignored: gtk-layer-shell calls `gtk_window_set_decorated(FALSE)` on its
+  /// own windows, and a layer-shell surface has no titlebar to draw.
+  // ignore: annotate_overrides
+  void setDecorated(bool decorated) {}
+
+  /// Ignored: the surface's background is whatever Flutter paints into it.
+  // ignore: annotate_overrides
+  void setAppPaintable(bool appPaintable) {}
+
+  /// Ignored: the surface's background is whatever Flutter paints into it.
+  // ignore: annotate_overrides
+  void setBackgroundColor(Color color) {}
+
+  /// Ignored: a layer-shell surface is placed by its anchors and margins, never
+  /// by dragging it.
+  // ignore: annotate_overrides
+  void beginMoveDrag({
+    required int button,
+    int rootX = 0,
+    int rootY = 0,
+    int timestamp = 0,
+  }) {}
+
+  /// Ignored: a layer-shell surface is sized by its anchors and the
+  /// compositor's configure, never by dragging its border.
+  // ignore: annotate_overrides
+  void beginResizeDrag({
+    required Object edge,
+    required int button,
+    int rootX = 0,
+    int rootY = 0,
+    int timestamp = 0,
+  }) {}
 }
 
 class LayerShellWindow extends StatelessWidget {

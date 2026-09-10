@@ -22,6 +22,14 @@ not just at construction.
   reachable through `autoExclusiveZone:` / `enableAutoExclusiveZone()` instead.
 - New top-level `isLayerShellSupported()`, `layerShellProtocolVersion()` and
   `layerShellLibraryVersion()`.
+- **Fixed:** Flutter `master` turned `BaseWindowControllerLinux` into an
+  `abstract mixin class` carrying `setDecorated`, `setAppPaintable`,
+  `setBackgroundColor`, `beginMoveDrag` and `beginResizeDrag`, which
+  `LayershellWindowController` did not implement. It now no-ops all five — a
+  layer-shell surface is placed and sized by its anchors, margins and the
+  compositor's configure, and gtk-layer-shell already undecorates the windows
+  it owns. They are spelled to compile against revisions predating the change
+  as well.
 - `set_exclusive_edge` (protocol version 5) remains unavailable: gtk-layer-shell
   0.10.0 has no wrapper for it. See the protocol coverage note in the README.
 
