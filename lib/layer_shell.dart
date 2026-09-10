@@ -713,19 +713,6 @@ class LayershellWindowController extends WindowController
   @override
   String get title => '';
 
-  // The members below were added to `BaseWindowControllerLinux` when it became
-  // an `abstract mixin class` carrying real implementations. They are spelled
-  // without `@override`, and `beginResizeDrag`'s `edge` is an `Object` rather
-  // than a `WindowDragEdge`, so that this package still compiles against
-  // Flutter revisions that predate that change: there is nothing to override
-  // there and `WindowDragEdge` does not exist. Parameter types are
-  // contravariant, so a supertype is a valid implementation, and none of these
-  // reads the value.
-  //
-  // All five are no-ops rather than forwards to GTK: a layer-shell surface is
-  // placed and sized by its anchors, margins and the compositor's configure,
-  // and gtk-layer-shell already turns decorations off for the windows it owns.
-
   /// Ignored: gtk-layer-shell calls `gtk_window_set_decorated(FALSE)` on its
   /// own windows, and a layer-shell surface has no titlebar to draw.
   // ignore: annotate_overrides
