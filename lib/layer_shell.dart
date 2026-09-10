@@ -712,6 +712,53 @@ class LayershellWindowController extends WindowController
 
   @override
   String get title => '';
+
+  // The members below were added to `BaseWindowControllerLinux` when it became
+  // an `abstract mixin class` carrying real implementations. They are spelled
+  // without `@override`, and `beginResizeDrag`'s `edge` is an `Object` rather
+  // than a `WindowDragEdge`, so that this package still compiles against
+  // Flutter revisions that predate that change: there is nothing to override
+  // there and `WindowDragEdge` does not exist. Parameter types are
+  // contravariant, so a supertype is a valid implementation, and none of these
+  // reads the value.
+  //
+  // All five are no-ops rather than forwards to GTK: a layer-shell surface is
+  // placed and sized by its anchors, margins and the compositor's configure,
+  // and gtk-layer-shell already turns decorations off for the windows it owns.
+
+  /// Ignored: gtk-layer-shell calls `gtk_window_set_decorated(FALSE)` on its
+  /// own windows, and a layer-shell surface has no titlebar to draw.
+  // ignore: annotate_overrides
+  void setDecorated(bool decorated) {}
+
+  /// Ignored: the surface's background is whatever Flutter paints into it.
+  // ignore: annotate_overrides
+  void setAppPaintable(bool appPaintable) {}
+
+  /// Ignored: the surface's background is whatever Flutter paints into it.
+  // ignore: annotate_overrides
+  void setBackgroundColor(Color color) {}
+
+  /// Ignored: a layer-shell surface is placed by its anchors and margins, never
+  /// by dragging it.
+  // ignore: annotate_overrides
+  void beginMoveDrag({
+    required int button,
+    int rootX = 0,
+    int rootY = 0,
+    int timestamp = 0,
+  }) {}
+
+  /// Ignored: a layer-shell surface is sized by its anchors and the
+  /// compositor's configure, never by dragging its border.
+  // ignore: annotate_overrides
+  void beginResizeDrag({
+    required Object edge,
+    required int button,
+    int rootX = 0,
+    int rootY = 0,
+    int timestamp = 0,
+  }) {}
 }
 
 class LayerShellWindow extends StatelessWidget {
