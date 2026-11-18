@@ -16,7 +16,7 @@
 
 import 'dart:ffi' as ffi;
 import 'dart:ui' show Display, FlutterView;
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/src/foundation/_features.dart';
 import 'package:flutter/src/widgets/_window.dart';
 import 'package:flutter/src/widgets/_window_linux.dart';

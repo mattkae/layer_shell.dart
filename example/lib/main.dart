@@ -328,12 +328,9 @@ class _LavaLampPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Float slots are the shader's uniforms flattened in declaration order:
-    // 0,1 = uSize, 2 = uTime.
-    shader
-      ..setFloat(0, size.width)
-      ..setFloat(1, size.height)
-      ..setFloat(2, seconds.value);
+    // Uniforms by the names declared in shaders/lava_lamp.frag.
+    shader.getUniformVec2('uSize').set(size.width, size.height);
+    shader.getUniformFloat('uTime').set(seconds.value);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }
 
