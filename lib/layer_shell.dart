@@ -16,7 +16,7 @@
 
 import 'dart:ffi' as ffi;
 import 'dart:ui' show Display, FlutterView;
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/src/foundation/_features.dart';
 import 'package:flutter/src/widgets/_window.dart';
 import 'package:flutter/src/widgets/_window_linux.dart';
@@ -26,13 +26,17 @@ import 'src/gtk.dart';
 // `@internal` in Flutter and therefore not reachable through the public
 // `package:flutter/widgets.dart`, so consumers (e.g. the example app) get them
 // from here instead.
+//
+// `Window` is the one widget for every kind of window: it takes any
+// `BaseWindowController`, a `LayershellWindowController` included, so this
+// package has no widget of its own.
 export 'package:flutter/src/widgets/_window.dart'
     show
         WindowManager,
         WindowRegistry,
         WindowEntry,
         WindowScope,
-        PopupWindow,
+        Window,
         PopupWindowController,
         PopupWindowControllerDelegate;
 export 'package:flutter/src/widgets/_window_positioner.dart'
@@ -746,27 +750,4 @@ class LayershellWindowController extends WindowController
     int rootY = 0,
     int timestamp = 0,
   }) {}
-}
-
-class LayerShellWindow extends StatelessWidget {
-  LayerShellWindow({super.key, required this.controller, required this.child}) {
-    if (!isWindowingEnabled) {
-      throw UnsupportedError(_kWindowingDisabledErrorMessage);
-    }
-  }
-
-  final LayershellWindowController controller;
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: controller,
-      builder: (BuildContext context, Widget? _) => View(
-        view: controller.rootView,
-        child: WindowScope(controller: controller, child: child),
-      ),
-    );
-  }
 }

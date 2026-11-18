@@ -125,7 +125,7 @@ class _MyShellState extends State<MyShell> {
   Widget build(BuildContext context) {
     return ViewCollection(
       views: [
-        LayerShellWindow(
+        Window(
           controller: _panel,
           child: /* your panel content */,
         ),
@@ -141,7 +141,7 @@ class _MyShellState extends State<MyShell> {
 | --- | --- |
 | `initLayerShell()` | Installs the windowing owner globally. Call once before creating controllers. |
 | `LayershellWindowController` | Wraps a Flutter Linux window and applies layer-shell properties (layer, anchors, exclusive zone, margins, keyboard mode, monitor, namespace). |
-| `LayerShellWindow` | Widget that renders `child` into a controller's view. Place inside a `ViewCollection`. |
+| `Window` | Flutter's own window widget, re-exported: renders `child` into any controller's view, a `LayershellWindowController` included. Place inside a `ViewCollection`, or register a `WindowEntry` with a `WindowManager`. |
 | `listMonitors()` / `MonitorInfo` | Enumerate connected monitors (name, model, position, handle). |
 | `getScreenSize()` | Primary monitor size in logical pixels. |
 | `isLayerShellSupported()` | Whether the compositor advertises `zwlr_layer_shell_v1`. Call after `initLayerShell()`. |
