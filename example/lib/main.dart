@@ -1,4 +1,4 @@
-// PopupWindow/PopupWindowController/WindowPositioner are `@internal` in
+// Window/PopupWindowController/WindowPositioner are `@internal` in
 // Flutter's experimental windowing API; suppress the internal-member lint here.
 // ignore_for_file: invalid_use_of_internal_member
 import 'dart:ui' as ui;
@@ -178,16 +178,16 @@ class _ExampleAppState extends State<_ExampleApp> {
 
   @override
   Widget build(BuildContext context) {
-    // Each [LayerShellWindow] renders into its own controller's view, so a
+    // Each [Window] renders into its own controller's view, so a
     // [ViewCollection] is how one Flutter process drives several top-level
     // layer-shell surfaces at once.
     return ViewCollection(
       views: <Widget>[
-        LayerShellWindow(
+        Window(
           controller: _background,
           child: const _LavaLampBackground(),
         ),
-        LayerShellWindow(
+        Window(
           controller: _panel,
           child: _PanelBody(
             panel: _panel,
@@ -196,14 +196,14 @@ class _ExampleAppState extends State<_ExampleApp> {
             onTogglePopup: _togglePopup,
           ),
         ),
-        LayerShellWindow(
+        Window(
           controller: _bottomPanel,
           child: const _EdgePanel(
             color: _kBottomPanelColor,
             label: 'bottom panel',
           ),
         ),
-        LayerShellWindow(
+        Window(
           controller: _leftPanel,
           child: const _EdgePanel(
             color: _kLeftPanelColor,
@@ -215,7 +215,7 @@ class _ExampleAppState extends State<_ExampleApp> {
         // layer-shell surface, so it joins the collection as a sibling view for
         // as long as it is open.
         if (_popup != null)
-          PopupWindow(
+          Window(
             controller: _popup!,
             child: _PopupContents(onClose: _popup!.destroy),
           ),

@@ -1,3 +1,16 @@
+## 0.4.0
+
+- **Breaking:** `LayerShellWindow` is removed. Flutter `master` replaced its
+  per-type window widgets (`DialogWindow`, `PopupWindow`, `TooltipWindow`,
+  `SatelliteWindow`) with one `Window` widget that takes any
+  `BaseWindowController` (flutter/flutter#196002), so a
+  `LayershellWindowController` is mounted with `Window` like every other
+  controller. `Window` is re-exported from this package; replace
+  `LayerShellWindow(controller: c, child: w)` with
+  `Window(controller: c, child: w)`.
+- **Breaking:** the `PopupWindow` re-export is gone with the SDK widget; use
+  `Window` for popups too.
+
 ## 0.3.0
 
 Completes coverage of the layer-shell requests that `gtk-layer-shell` exposes.
