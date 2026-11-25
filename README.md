@@ -139,7 +139,7 @@ class _MyShellState extends State<MyShell> {
 
 | Symbol | Purpose |
 | --- | --- |
-| `initLayerShell()` | Installs the windowing owner globally. Call once before creating controllers. |
+| `initLayerShell()` | Installs the windowing owner globally, and on Wayland the [engine workarounds](#engine-workarounds). Call once before creating controllers. |
 | `LayershellWindowController` | Wraps a Flutter Linux window and applies layer-shell properties (layer, anchors, exclusive zone, margins, keyboard mode, monitor, namespace). |
 | `Window` | Flutter's own window widget, re-exported: renders `child` into any controller's view, a `LayershellWindowController` included. Place inside a `ViewCollection`, or register a `WindowEntry` with a `WindowManager`. |
 | `listMonitors()` / `MonitorInfo` | Enumerate connected monitors (name, model, position, handle). |
@@ -196,6 +196,54 @@ it, `LayershellWindowController.zwlrLayerSurfaceHandle` exposes the raw
 `zwlr_layer_surface_v1` proxy to marshal yourself — check
 `layerShellProtocolVersion() >= 5` first, and note that requests sent that way
 bypass gtk-layer-shell's cached state.
+
+## Engine workarounds
+
+On Wayland, `initLayerShell()` installs stopgaps for two defects in Flutter's
+Linux embedder. Each one stops **every** window of the app from rendering, and
+neither is specific to layer-shell: they affect any view the engine creates,
+the SDK's own popups, tooltips and dialogs included. A desktop shell is simply
+where they are easiest to hit.
+
+**The render context is left on the wrong thread.** Realizing a view makes the
+engine's OpenGL render context current on the platform thread and never
+releases it. That normally fails harmlessly, because the raster thread owns the
+context — except while the raster thread is presenting a frame, when it has
+switched to another one. A view created in that moment takes the context, and
+every frame after it fails with
+
+```
+Could not make the context current to acquire the frame.
+```
+
+The workaround releases the context as soon as the view is realized. At worst a
+single frame is dropped.
+
+**The raster thread waits forever for a buffer.** A view sized to its content
+(every popup and tooltip) renders into a *synchronized* Wayland subsurface, and
+any other view's is synchronized for the length of a resize. Its frames take
+effect only when GTK commits the parent surface, and the compositor keeps their
+buffers until then. When GTK is not committing — its frame clock is waiting for
+a frame callback, or nothing asked it to redraw — the driver runs out of
+buffers and the raster thread blocks in `eglSwapBuffers()`. Nothing is logged;
+the app keeps running but no window ever repaints. Mir makes this much easier
+to reach, because it never releases a buffer that was replaced in a
+synchronized subsurface's cache.
+
+The workaround watches for frames that were requested but never start, and
+commits the top-level surfaces when that happens, which is what the raster
+thread is waiting for. The first stall costs up to half a second; after it, the
+surfaces are committed after every frame until a window opens or closes.
+
+Both are meant to be removed once the embedder (and, for the second, Mir) is
+fixed. To run without them:
+
+```dart
+initLayerShell(engineWorkarounds: false);
+```
+
+Not covered: the embedder can also crash when a window is destroyed while it is
+being resized or presented. Nothing outside the engine can prevent that.
 
 ## Example
 

@@ -1,3 +1,19 @@
+## 0.4.1
+
+- `initLayerShell()` now installs stopgaps for two defects in Flutter's Linux
+  embedder that stop every window of a multi-window Wayland app from rendering.
+  Both apply process-wide, so the SDK's own popups and dialogs are covered too.
+  Pass `engineWorkarounds: false` to opt out.
+  - The engine's render context could be left current on the platform thread
+    when a view was realized while a frame was being presented, after which
+    every frame failed with "Could not make the context current to acquire the
+    frame". The context is now released as soon as the view is realized.
+  - The raster thread could block forever in `eglSwapBuffers()` waiting for a
+    buffer held for a synchronized subsurface whose parent GTK was no longer
+    committing — silently, and far more readily on Mir, which never releases a
+    buffer replaced in such a subsurface's cache. A watchdog now commits the
+    top-level surfaces when requested frames stop arriving.
+
 ## 0.4.0
 
 - **Breaking:** `LayerShellWindow` is removed. Flutter `master` replaced its

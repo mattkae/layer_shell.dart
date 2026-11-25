@@ -20,6 +20,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter/src/foundation/_features.dart';
 import 'package:flutter/src/widgets/_window.dart';
 import 'package:flutter/src/widgets/_window_linux.dart';
+import 'src/engine_workarounds.dart';
 import 'src/gtk.dart';
 
 // Re-export the SDK windowing pieces used to open windows dynamically. These are
@@ -73,11 +74,25 @@ bool _initialized = false;
 ///
 /// Call this once after `WidgetsFlutterBinding.ensureInitialized()` and before
 /// creating any [LayershellWindowController].
-void initLayerShell() {
+///
+/// On Wayland this also installs stopgaps for two defects in Flutter's Linux
+/// embedder, each of which stops every window of the app from rendering: the
+/// engine's OpenGL context being left current on the wrong thread when a view
+/// is created ("Could not make the context current to acquire the frame"),
+/// and the raster thread waiting forever for a buffer the compositor is
+/// holding for a synchronized subsurface. They apply to every view in the
+/// process, the SDK's own popups and dialogs included. Pass
+/// `engineWorkarounds: false` to leave them out, for instance to check whether
+/// a Flutter revision still needs them. The README's "Engine workarounds"
+/// section has the details.
+void initLayerShell({bool engineWorkarounds = true}) {
   if (!isWindowingEnabled) {
     throw UnsupportedError(_kWindowingDisabledErrorMessage);
   }
   WidgetsBinding.instance.windowingOwner = ExtendedWindowingOwnerLinux();
+  if (engineWorkarounds) {
+    installEngineWorkarounds();
+  }
   _initialized = true;
 }
 
